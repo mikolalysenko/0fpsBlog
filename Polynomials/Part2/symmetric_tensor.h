@@ -25,8 +25,8 @@ inline int factorial(int n) {
 
 template<int d>
 inline int multinomial(std::array<int, d> const& coeff) {
-    int denom = 1, n = 1;
-    for(int j=d-1; j>=0; --j) {
+    int denom = 1, n = 0;
+    for(int j=0; j<d; ++j) {
         n       += coeff[j];
         denom   *= factorial(coeff[j]);
     }
@@ -118,7 +118,6 @@ struct SymmetricIndexIterator {
                 result[j++] = i;
             }
         }
-        assert(j == rank);
         return result;
     }
 
@@ -145,18 +144,18 @@ struct SymmetricTensor {
     static_assert(R >= 0, "Rank must be nonnegative");
     static_assert(D > 0, "Dimension must be greater than 0");
 
-    //Constants
-    enum {
-        rank = R,
-        dimension = D,
-        size = Binomial<rank + dimension - 1, rank>::value
-    };
-
     //Type macros
     typedef Scalar_t                                Scalar;
-    typedef SymmetricIndexIterator<rank, dimension> BaseIterator;
+    typedef SymmetricIndexIterator<R, D> BaseIterator;
     typedef typename BaseIterator::DegreeIndex      DegreeIndex;
     typedef typename BaseIterator::TensorIndex      TensorIndex;
+    
+    //Constants
+    enum {
+        rank = BaseIterator::rank,
+        dimension = BaseIterator::dimension,
+        size = Binomial<rank + dimension - 1, rank>::value
+    };
     
     //Iterator type
     friend class Iterator;
@@ -268,24 +267,48 @@ struct SymmetricTensor {
                     a[i] = 0;
                     apartial[i] = A_type::rank;
                     if(i > 0) {
-                        vpartial[dimension - i - 1] = vpartial[dimension - i] + v[dimension - i - 1];
+                        vpartial[dimension - i-1] = vpartial[dimension - (i+2)] + v[dimension - (i+1)];
                     }
                     else {
-                        vpartial[dimension - i] = 0;
+                        vpartial[dimension - i-1] = 0;
                     }
                 }
             }
             
-            int visit(const int k) {
+            void visit(const int k) {
+            
+                using namespace std;    //TODO: REMOVE ME
+                
+                
                 if(k == dimension) {
                     DegreeIndex b;
+                    cout << "Visiting: " << endl;
                     for(int i=0; i<dimension; ++i) {
                         b[i] = v[i] - a[i];
+                        
+                        cout << v[i] << '\t' << b[i] << '\t' << a[i] << endl;
                     }
-                    w += Scalar(multinomial(a) * multinomial(b)) * (*A.degree_index(a)) * (*B.degree_index(b));
+                    auto a_val = Scalar(multinomial<dimension>(a)) * (*A.degree_index(a));
+                    auto b_val = Scalar(multinomial<dimension>(b)) * (*B.degree_index(b));
+                    
+                    cout << "a_val = " << a_val << endl
+                         << "b_val = " << b_val << endl;
+                         
+                    w += a_val * b_val;
                     return;
                 }
-                int l = max(0, apartial[k] - vpartial[k]), u = min(v[k], apartial[k]);
+                
+                if(k > 0) {
+                    apartial[k] = apartial[k-1] - a[k-1];
+                } else {
+                    apartial[k] = A_type::rank;
+                }
+                int l = max(0, apartial[k] - vpartial[k]), u = min(v[k], v[k] + apartial[k]);
+                
+                cout << "Looping k = " << k << ", lb = " << l << ", ub = " << u 
+                     << ", apartial[k] = " << apartial[k] << ", vpartial[k] = " << vpartial[k] << endl;
+                     
+                     
                 for(a[k] = l; a[k] <= u; ++a[k]) {
                     visit(k+1);
                 }
@@ -294,9 +317,10 @@ struct SymmetricTensor {
         
         C_type result;
         for(auto iter=result.begin(); iter!=result.end(); ++iter) {
-            Visitor visitor(iter.degrees());
-            visitor.visit();
-            *iter = visitor.w;
+            auto deg = iter.degree_index();
+            Visitor visitor(deg, *this, other);
+            visitor.visit(0);
+            *iter = visitor.w / Scalar(multinomial<dimension>(deg));
         }
         return result;
     }
@@ -306,17 +330,52 @@ private:
     Scalar coefficients[size];
 };
 
-//Prints out the components of a tensor
+//Prints out the components of a tensor as a polynomial in pretty latex formatting
 template<typename Scalar, int rank, int dimension>
 std::ostream& operator<<(std::ostream& os, SymmetricTensor<Scalar, rank, dimension> const& tensor) {
-    for(auto iter=tensor.begin(); iter!=tensor.end(); ++iter) {
-        os << "(";
-        for(int i=0; i<rank; ++i) {
-            if(i > 0)
-                os << ",";
-            os << iter.tensor_index()[i];
+    bool need_plus = false;
+
+    for(auto iter=tensor.begin(); iter!=tensor.end(); ++iter) {    
+
+        auto deg = iter.degree_index();
+        auto coef = Scalar(multinomial<dimension>(deg)) * (*iter);
+        
+        if(coef == 0) {
+            continue;
+        } else if(need_plus) {
+            if(coef > 0) {
+                os << " + ";
+                if( coef != 1 ) os << coef;
+            } else {
+                os << " - ";
+                if( coef != -1 ) os << -coef;
+            }
+        } else if(coef == -1) {
+            os << '-';
+        } else if(coef != 1) {
+            os << coef;
         }
-        os << ") : " << *iter << std::endl;
+        need_plus = true;
+        
+        bool need_space = false;
+        for(int i=0; i<dimension; ++i) {
+            if(deg[i] == 0)
+                continue;
+            if(need_space) {
+                os << ' ';
+            }
+            if(i >= 10) {
+                os << "x_{" << i << '}';
+            } else {
+                os << "x_" << i;
+            }
+            if(deg[i] >= 10) {
+                os << "^{" << deg[i] << '}';
+            } else if(deg[i] > 1) {
+                os << '^' << deg[i];
+            }
+            need_space = true;
+        }
     }
     return os;
 }
